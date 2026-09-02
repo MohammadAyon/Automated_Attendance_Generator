@@ -372,10 +372,14 @@ def build_instructions_sheet(wb, holidays, target_hours, weekly_off):
     ws["A1"] = "How the automation works"
     style_range(ws, "A1:H1", fill=BLACK, font=title_font(14))
 
+    def format_day(d):
+        if not hasattr(d, "strftime"):
+            return str(d)
+        return d.strftime("%d-%b-%Y").lstrip("0")
+
     if holidays:
         holiday_txt = " / ".join(
-            f"{d.strftime('%-d-%b-%Y') if hasattr(d, 'strftime') else d}"
-            for d in sorted(holidays)
+            format_day(d) for d in sorted(holidays)
         )
         holiday_line = f"5. {weekly_off}s are weekly off days and {holiday_txt} are configured holidays for this report."
     else:

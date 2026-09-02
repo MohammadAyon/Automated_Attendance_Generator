@@ -1,0 +1,8 @@
+{
+  "target_hours": 9,
+  "weekly_off": "Friday",
+  "holidays": {
+    "2026-08-05": "Holiday",
+    "2026-08-26": "Holiday"
+  }
+}
