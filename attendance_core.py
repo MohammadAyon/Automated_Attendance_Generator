@@ -15,6 +15,7 @@ packaged as a standalone executable other people run.
 """
 
 import calendar
+import csv
 import json
 import os
 import re
@@ -131,30 +132,100 @@ TIME_RE = re.compile(r"^\d{1,2}:\d{2}:\d{2}$")
 
 
 def parse_csv(path):
-    """Returns {employee: {date: [time, time, ...]}} preserving CSV order."""
+    """Returns {employee: {date: [time, time, ...]}} preserving CSV order.
+
+    Supports both the older one-column hierarchy format and the actual
+    recordList.csv export, which is a normal CSV with columns:
+    User,WorkId,CardNo,Date,Time,IN/OUT,EventCode
+    """
     employees = {}
-    cur_emp = None
-    cur_date = None
+
+    def clean_value(value):
+        if value is None:
+            return ""
+        value = str(value).strip().replace("\ufeff", "")
+        return value[1:] if value.startswith("'") else value
+
+    def add_punch(emp, d, t):
+        if not emp or not d or not t:
+            return
+        employees.setdefault(emp, {})
+        employees[emp].setdefault(d, [])
+        employees[emp][d].append(t)
+
+    def parse_legacy_lines(lines):
+        cur_emp = None
+        cur_date = None
+
+        for line in lines[1:]:
+            if line == "Grand Total":
+                break
+            if NAME_RE.match(line):
+                cur_emp = line[1:]
+                employees.setdefault(cur_emp, {})
+                cur_date = None
+            elif DATE_RE.match(line):
+                cur_date = datetime.strptime(line, "%m/%d/%Y").date()
+                employees.setdefault(cur_emp, {})[cur_date] = []
+            elif TIME_RE.match(line):
+                if cur_emp is not None and cur_date is not None:
+                    employees[cur_emp][cur_date].append(
+                        datetime.strptime(line, "%H:%M:%S").time())
+
+    def parse_standard_csv(rows):
+        for row in rows:
+            if not row or all(not str(cell).strip() for cell in row):
+                continue
+            values = [clean_value(c) for c in row]
+            if not values:
+                continue
+            if values[0].lower() in {"user", "row labels"}:
+                continue
+            if values[0].lower() == "grand total":
+                break
+            if len(values) < 5:
+                continue
+            emp = values[0]
+            date_value = values[3].strip()
+            time_value = values[4].strip()
+            if not emp or not date_value or not time_value:
+                continue
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
+                try:
+                    d = datetime.strptime(date_value, fmt).date()
+                    break
+                except ValueError:
+                    d = None
+            if d is None:
+                continue
+            for fmt in ("%H:%M:%S", "%I:%M:%S %p"):
+                try:
+                    t = datetime.strptime(time_value, fmt).time()
+                    break
+                except ValueError:
+                    t = None
+            if t is not None:
+                add_punch(emp, d, t)
+
+    with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
+        raw_rows = list(csv.reader(f))
+
+    if not raw_rows:
+        return employees
+
+    row0 = [clean_value(v) for v in raw_rows[0]]
+    standard_csv_like = (
+        len(row0) >= 5 and row0[0].lower() == "user" and row0[3].lower() == "date"
+    )
+
+    if standard_csv_like:
+        parse_standard_csv(raw_rows[1:])
+        return employees
 
     with open(path, encoding="utf-8-sig", errors="replace") as f:
-        lines = [l.strip() for l in f if l.strip()]
+        lines = [line.strip() for line in f if line.strip()]
 
-    for line in lines[1:]:  # skip "Row Labels" pivot header
-        if line == "Grand Total":
-            break
-        if NAME_RE.match(line):
-            cur_emp = line[1:]
-            employees.setdefault(cur_emp, {})
-            cur_date = None
-        elif DATE_RE.match(line):
-            cur_date = datetime.strptime(line, "%m/%d/%Y").date()
-            employees.setdefault(cur_emp, {})[cur_date] = []
-        elif TIME_RE.match(line):
-            h, m, s = (int(x) for x in line.split(":"))
-            if cur_emp is not None and cur_date is not None:
-                employees[cur_emp][cur_date].append(
-                    datetime.strptime(line, "%H:%M:%S").time())
-
+    parse_legacy_lines(lines)
     return employees
 
 
